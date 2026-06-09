@@ -14,6 +14,16 @@ export function feeAdjustAsks(asks: BookLevel[], feeRateBps: number): BookLevel[
 	}));
 }
 
+/** Bid-side counterpart: net sale proceeds per share after the taker fee. */
+export function feeAdjustBids(bids: BookLevel[], feeRateBps: number): BookLevel[] {
+	if (feeRateBps <= 0) return bids;
+	const rate = feeRateBps / 10_000;
+	return bids.map(({ price, size }) => ({
+		price: price - rate * Math.min(price, 1 - price),
+		size,
+	}));
+}
+
 export interface JointFill {
 	shares: number;
 	totalCost: number;
@@ -67,6 +77,87 @@ export function jointFill(legAsks: BookLevel[][], maxSetCost: number, maxShares 
 	}
 
 	return { shares, totalCost, perLeg };
+}
+
+/**
+ * Sell the same number of shares on every leg simultaneously, walking each
+ * leg's bid levels best-first, for as long as the marginal combined proceeds
+ * of one share-set stay at or above minSetRevenue.
+ */
+export function jointFillBids(
+	legBids: BookLevel[][],
+	minSetRevenue: number,
+	maxShares = Infinity,
+): JointFill {
+	const idx = legBids.map(() => 0);
+	const taken = legBids.map(() => 0);
+	const perLeg = legBids.map(() => ({ shares: 0, cost: 0, capPrice: Infinity }));
+	let shares = 0;
+	let totalCost = 0; // total proceeds, kept in the cost field for symmetry
+
+	for (;;) {
+		if (shares >= maxShares) break;
+
+		let marginal = 0;
+		let room = maxShares - shares;
+		let exhausted = false;
+		for (let i = 0; i < legBids.length; i++) {
+			const level = legBids[i]![idx[i]!];
+			if (!level) {
+				exhausted = true;
+				break;
+			}
+			marginal += level.price;
+			room = Math.min(room, level.size - taken[i]!);
+		}
+		if (exhausted || marginal < minSetRevenue - 1e-12 || room <= 1e-9) break;
+
+		shares += room;
+		totalCost += marginal * room;
+		for (let i = 0; i < legBids.length; i++) {
+			const level = legBids[i]![idx[i]!]!;
+			perLeg[i]!.shares += room;
+			perLeg[i]!.cost += level.price * room;
+			perLeg[i]!.capPrice = Math.min(perLeg[i]!.capPrice, level.price);
+			taken[i]! += room;
+			if (level.size - taken[i]! <= 1e-9) {
+				idx[i]!++;
+				taken[i] = 0;
+			}
+		}
+	}
+
+	return { shares, totalCost, perLeg };
+}
+
+/**
+ * Plan a mint-and-sell arbitrage: split $1 of USDC into one YES + one NO via
+ * the CTF, then sell both into the bids. Profitable when combined net bids
+ * exceed $1 per set. Returns null when no size clears the edge.
+ */
+export function planMintSell(
+	legs: ArbLeg[],
+	minEdge: number,
+	maxUsd: number,
+): { legs: ArbPlanLeg[]; shares: number; totalCost: number; profit: number; edge: number } | null {
+	// Mint cost is exactly $1 per set, so maxUsd caps shares directly.
+	const fill = jointFillBids(legs.map((l) => l.bids), 1 + minEdge, maxUsd);
+	if (fill.shares <= 0) return null;
+
+	const mintCost = fill.shares;
+	const profit = fill.totalCost - mintCost;
+	return {
+		legs: legs.map((leg, i) => ({
+			leg,
+			shares: fill.perLeg[i]!.shares,
+			cost: fill.perLeg[i]!.cost,
+			capPrice: fill.perLeg[i]!.capPrice,
+		})),
+		shares: fill.shares,
+		totalCost: mintCost,
+		profit,
+		edge: profit / mintCost,
+	};
 }
 
 /**

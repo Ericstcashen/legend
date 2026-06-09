@@ -33,7 +33,10 @@ export class DryRunExecutor {
  * reported loudly and the remaining legs are abandoned.
  */
 export class LiveExecutor {
-	constructor(private client: ClobClient) {}
+	constructor(
+		private client: ClobClient,
+		private killSwitch: () => boolean,
+	) {}
 
 	private async buyLeg(leg: ArbPlanLeg): Promise<void> {
 		const resp = await this.client.createAndPostMarketOrder(
@@ -53,6 +56,10 @@ export class LiveExecutor {
 	}
 
 	async execute(opp: ArbOpportunity): Promise<ExecutionResult> {
+		if (this.killSwitch()) {
+			console.warn("KILL_SWITCH active — refusing to place orders");
+			return { executed: false, filledLegs: 0, spentUsd: 0, error: "kill switch" };
+		}
 		console.log(`LIVE — buying:\n${describe(opp)}`);
 		let filledLegs = 0;
 		let spentUsd = 0;

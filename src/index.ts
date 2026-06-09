@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { type ApiKeyCreds, Chain, ClobClient } from "@polymarket/clob-client-v2";
 import { createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -6,7 +7,8 @@ import { BookFetcher } from "./books.js";
 import { type Config, loadConfig } from "./config.js";
 import { DryRunExecutor, type Executor, LiveExecutor } from "./executor.js";
 import { discoverBtcMarkets } from "./gamma.js";
-import { RiskManager } from "./risk.js";
+import { PaperLedger } from "./paper.js";
+import { Cooldown, RiskManager } from "./risk.js";
 import { findAllArbs } from "./strategies.js";
 import type { BtcMarket } from "./types.js";
 
@@ -36,16 +38,22 @@ async function buildClients(cfg: Config): Promise<{ client: ClobClient; executor
 		client = new ClobClient({ host: cfg.clobApiUrl, chain: chainId, signer, creds });
 	}
 	console.log(`LIVE trading as ${account.address}`);
-	return { client, executor: new LiveExecutor(client) };
+	// Halt orders via env (KILL_SWITCH=1) or by touching a KILL file at runtime.
+	const killSwitch = () => cfg.killSwitch || existsSync("KILL");
+	return { client, executor: new LiveExecutor(client, killSwitch) };
 }
 
-async function scanOnce(
-	cfg: Config,
-	markets: BtcMarket[],
-	books: BookFetcher,
-	risk: RiskManager,
-	executor: Executor,
-): Promise<void> {
+interface ScanContext {
+	cfg: Config;
+	books: BookFetcher;
+	risk: RiskManager;
+	executor: Executor;
+	cooldown: Cooldown;
+	ledger: PaperLedger;
+}
+
+async function scanOnce(ctx: ScanContext, markets: BtcMarket[]): Promise<void> {
+	const { cfg, books, risk, executor, cooldown, ledger } = ctx;
 	const legs = await books.fetchLegs(markets);
 	const opportunities = findAllArbs({
 		markets,
@@ -55,21 +63,45 @@ async function scanOnce(
 	});
 
 	if (opportunities.length === 0) {
-		console.log(`no arbs >= ${(cfg.minEdge * 100).toFixed(1)}% edge across ${markets.length} markets`);
+		console.log(
+			`no arbs >= ${(cfg.minEdge * 100).toFixed(1)}% edge across ${markets.length} markets | ${ledger.summary()}`,
+		);
 		return;
 	}
 
 	for (const opp of opportunities) {
+		if (cooldown.active(opp)) continue;
 		const rejection = risk.check(opp);
 		if (rejection) {
 			console.log(`skip [${opp.kind}] ${opp.description}: ${rejection}`);
 			continue;
 		}
+
+		if (!opp.executable) {
+			console.log(
+				`MANUAL [${opp.kind}] ${opp.description}: $${opp.profit.toFixed(2)} available ` +
+					`but needs an on-chain CTF split before selling — not automated`,
+			);
+			cooldown.mark(opp);
+			continue;
+		}
+
 		const result = await executor.execute(opp);
 		if (result.spentUsd > 0) risk.recordSpend(result.spentUsd);
-		// Books are stale for overlapping opportunities once one trade fires.
-		if (result.executed) break;
+		if (!cfg.live) {
+			// Paper fill: we sized from live depth, so book the planned basket.
+			ledger.record(opp);
+			risk.recordSpend(opp.totalCost);
+			cooldown.mark(opp);
+			continue;
+		}
+		if (result.executed) {
+			cooldown.mark(opp);
+			// Books are stale for overlapping opportunities once one trade fires.
+			break;
+		}
 	}
+	console.log(ledger.summary());
 }
 
 async function main() {
@@ -81,8 +113,14 @@ async function main() {
 	);
 
 	const { client, executor } = await buildClients(cfg);
-	const books = new BookFetcher(client);
-	const risk = new RiskManager(cfg.maxDailyUsd, cfg.minProfitUsd);
+	const ctx: ScanContext = {
+		cfg,
+		books: new BookFetcher(client),
+		risk: new RiskManager(cfg.maxDailyUsd, cfg.minProfitUsd),
+		executor,
+		cooldown: new Cooldown(cfg.cooldownMs),
+		ledger: new PaperLedger(cfg.paperLedgerPath),
+	};
 
 	let markets: BtcMarket[] = [];
 	let marketsFetchedAt = 0;
@@ -94,7 +132,7 @@ async function main() {
 				marketsFetchedAt = Date.now();
 				console.log(`tracking ${markets.length} bitcoin markets`);
 			}
-			await scanOnce(cfg, markets, books, risk, executor);
+			await scanOnce(ctx, markets);
 		} catch (err) {
 			console.error(`scan failed: ${(err as Error).message}`);
 		}

@@ -1,13 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { feeAdjustAsks, jointFill, planArb } from "../src/arbMath.js";
+import {
+	feeAdjustAsks,
+	feeAdjustBids,
+	jointFill,
+	jointFillBids,
+	planArb,
+	planMintSell,
+} from "../src/arbMath.js";
 import type { ArbLeg } from "../src/types.js";
 
-function leg(asks: [number, number][]): ArbLeg {
+function leg(asks: [number, number][], bids: [number, number][] = []): ArbLeg {
 	return {
 		tokenId: "t",
 		marketQuestion: "q",
 		outcome: "Yes",
 		asks: asks.map(([price, size]) => ({ price, size })),
+		bids: bids.map(([price, size]) => ({ price, size })),
 		tickSize: "0.01",
 		negRisk: false,
 	};
@@ -86,5 +94,57 @@ describe("planArb", () => {
 		const plan = planArb(legs, 2, 0.01, 1000);
 		expect(plan).not.toBeNull();
 		expect(plan!.profit).toBeCloseTo(10 * (2 - 1.8));
+	});
+});
+
+describe("feeAdjustBids", () => {
+	it("subtracts rate * min(p, 1-p) from proceeds", () => {
+		const [adjusted] = feeAdjustBids([{ price: 0.7, size: 10 }], 200);
+		expect(adjusted!.price).toBeCloseTo(0.7 - 0.02 * 0.3, 10);
+	});
+});
+
+describe("jointFillBids", () => {
+	it("fills nothing when combined bids are under the floor", () => {
+		const fill = jointFillBids([[{ price: 0.5, size: 10 }], [{ price: 0.48, size: 10 }]], 1.0);
+		expect(fill.shares).toBe(0);
+	});
+
+	it("walks down the bids while the set revenue clears, tracking floor prices", () => {
+		const yes = [
+			{ price: 0.56, size: 5 },
+			{ price: 0.5, size: 5 },
+		];
+		const no = [{ price: 0.5, size: 10 }];
+		// sets 1-5 yield 1.06, sets 6-10 yield 1.00 < 1.01 floor
+		const fill = jointFillBids([yes, no], 1.01);
+		expect(fill.shares).toBe(5);
+		expect(fill.totalCost).toBeCloseTo(5 * 1.06);
+		expect(fill.perLeg[0]!.capPrice).toBe(0.56);
+	});
+});
+
+describe("planMintSell", () => {
+	it("returns null when bids never exceed mint cost", () => {
+		const yes = leg([], [[0.5, 10]]);
+		const no = leg([], [[0.49, 10]]);
+		expect(planMintSell([yes, no], 0.01, 1000)).toBeNull();
+	});
+
+	it("plans profit as proceeds minus $1-per-set mint cost", () => {
+		const yes = leg([], [[0.55, 10]]);
+		const no = leg([], [[0.5, 10]]);
+		const plan = planMintSell([yes, no], 0.01, 1000);
+		expect(plan).not.toBeNull();
+		expect(plan!.shares).toBe(10);
+		expect(plan!.totalCost).toBeCloseTo(10); // mint cost
+		expect(plan!.profit).toBeCloseTo(10 * 0.05);
+	});
+
+	it("caps shares at the USD budget", () => {
+		const yes = leg([], [[0.55, 100]]);
+		const no = leg([], [[0.5, 100]]);
+		const plan = planMintSell([yes, no], 0.01, 25);
+		expect(plan!.shares).toBeCloseTo(25);
 	});
 });

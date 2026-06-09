@@ -25,6 +25,11 @@ basket's payoff at resolution is deterministic:
    (e.g. "What will Bitcoin's price be on …?"), one set of **all YES** redeems
    for exactly $1, and one set of **all NO** redeems for $(n−1). Either basket
    is bought when it trades below its redemption value.
+4. **Mint-and-sell detection** — the inverse signal: when net YES+NO *bids*
+   exceed $1, splitting $1 of USDC into a YES+NO pair (CTF split) and selling
+   both is an immediate profit with no capital lock. The split is an on-chain
+   step the executor does not automate, so these are reported as `MANUAL`
+   opportunities with the available profit, never auto-traded.
 
 Sizing walks every leg's ask levels simultaneously and stops at the depth
 where the *marginal* cost of one more share-set crosses
@@ -46,7 +51,13 @@ npm start
 ```
 
 Dry-run mode prints every qualifying opportunity with per-leg sizes, price
-caps, cost, and guaranteed profit, but never sends an order.
+caps, cost, and guaranteed profit, but never sends an order. Each qualifying
+basket is also booked to a **paper ledger** (`data/paper-trades.jsonl`,
+configurable via `PAPER_LEDGER`): fills are sized from live depth, profits are
+locked at fill time, and the running summary (`paper P&L: N fills, $X
+deployed, $Y locked profit`) is printed every scan and survives restarts.
+A per-opportunity cooldown (`COOLDOWN_MS`, default 10 min) stops a standing
+arb from being re-counted — or re-fired in live mode — every scan.
 
 ## Going live
 
@@ -59,6 +70,10 @@ caps, cost, and guaranteed profit, but never sends an order.
    the wallet automatically on startup if not provided.
 3. Tune `MIN_EDGE`, `MIN_PROFIT_USD`, `MAX_USD_PER_TRADE`, `MAX_DAILY_USD`.
 4. `npm start`
+
+To halt live order placement instantly without stopping the scanner, run
+`touch KILL` in the working directory (or set `KILL_SWITCH=1` before start);
+remove the file to resume.
 
 Execution uses sequential **FOK market buys**, one per leg, each capped at the
 worst book level the plan touched. FOK fills entirely at-or-better or not at

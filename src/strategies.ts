@@ -1,4 +1,4 @@
-import { planArb } from "./arbMath.js";
+import { planArb, planMintSell } from "./arbMath.js";
 import { crossStrikePairs, groupStrikeFamilies } from "./strikes.js";
 import type { ArbLeg, ArbOpportunity, BtcMarket } from "./types.js";
 
@@ -37,7 +37,37 @@ function build(
 		guaranteedValue: guaranteedPerSet * plan.shares,
 		profit: plan.profit,
 		edge: plan.edge,
+		executable: true,
 	};
+}
+
+/**
+ * Overpriced books: combined net YES+NO bids above $1. Capturing it means
+ * splitting $1 of USDC into a YES+NO pair on-chain (CTF) and selling both.
+ * The split is not automated, so these are reported rather than traded,
+ * and the profit is immediate — no capital lock until resolution.
+ */
+export function findMintSellArbs(inputs: StrategyInputs): ArbOpportunity[] {
+	const out: ArbOpportunity[] = [];
+	for (const m of inputs.markets) {
+		const yes = inputs.legs.get(m.yesTokenId);
+		const no = inputs.legs.get(m.noTokenId);
+		if (!yes?.bids.length || !no?.bids.length) continue;
+		const plan = planMintSell([yes, no], inputs.minEdge, inputs.maxUsdPerTrade);
+		if (!plan) continue;
+		out.push({
+			kind: "mint-sell",
+			description: `YES+NO bids > $1 (mint & sell) | ${m.question}`,
+			legs: plan.legs,
+			shares: plan.shares,
+			totalCost: plan.totalCost,
+			guaranteedValue: plan.totalCost + plan.profit,
+			profit: plan.profit,
+			edge: plan.edge,
+			executable: false,
+		});
+	}
+	return out;
 }
 
 /** Same-market arb: YES ask + NO ask under $1 redeems a guaranteed dollar. */
@@ -111,7 +141,10 @@ export function findNegRiskArbs(inputs: StrategyInputs): ArbOpportunity[] {
 }
 
 export function findAllArbs(inputs: StrategyInputs): ArbOpportunity[] {
-	return [...findPairArbs(inputs), ...findCrossStrikeArbs(inputs), ...findNegRiskArbs(inputs)].sort(
-		(a, b) => b.profit - a.profit,
-	);
+	return [
+		...findPairArbs(inputs),
+		...findCrossStrikeArbs(inputs),
+		...findNegRiskArbs(inputs),
+		...findMintSellArbs(inputs),
+	].sort((a, b) => b.profit - a.profit);
 }

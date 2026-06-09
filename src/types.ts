@@ -8,8 +8,10 @@ export interface ArbLeg {
 	tokenId: string;
 	marketQuestion: string;
 	outcome: string;
-	/** Ask levels sorted best (lowest) first, prices fee-adjusted. */
+	/** Ask levels sorted best (lowest) first, prices fee-adjusted upward. */
 	asks: BookLevel[];
+	/** Bid levels sorted best (highest) first, prices fee-adjusted downward (net proceeds). */
+	bids: BookLevel[];
 	tickSize: string;
 	negRisk: boolean;
 }
@@ -17,14 +19,14 @@ export interface ArbLeg {
 export interface ArbPlanLeg {
 	leg: ArbLeg;
 	shares: number;
-	/** Dollars spent on this leg (fee-adjusted). */
+	/** Dollars spent (buys) or received (sells) on this leg, fee-adjusted. */
 	cost: number;
-	/** Worst (highest) level price touched; used as the FOK price cap. */
+	/** Worst level price touched: highest for buys, lowest for sells. */
 	capPrice: number;
 }
 
 export interface ArbOpportunity {
-	kind: "pair" | "cross-strike" | "neg-risk-yes" | "neg-risk-no";
+	kind: "pair" | "cross-strike" | "neg-risk-yes" | "neg-risk-no" | "mint-sell";
 	description: string;
 	legs: ArbPlanLeg[];
 	/** Number of $1-redemption sets purchased. */
@@ -35,6 +37,11 @@ export interface ArbOpportunity {
 	profit: number;
 	/** profit / totalCost */
 	edge: number;
+	/**
+	 * False when the basket needs an on-chain step the executor does not
+	 * automate (e.g. CTF split before selling); such finds are reported, not traded.
+	 */
+	executable: boolean;
 }
 
 export interface BtcMarket {

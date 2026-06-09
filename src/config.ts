@@ -35,8 +35,15 @@ export interface Config {
 	maxDailyUsd: number;
 	scanIntervalMs: number;
 
+	/** Re-act on the same opportunity at most once per window. */
+	cooldownMs: number;
+	/** JSONL file where paper (dry-run) fills are recorded. */
+	paperLedgerPath: string;
+
 	/** When false (default) opportunities are logged, never traded. */
 	live: boolean;
+	/** When true, the live executor refuses to place any order. */
+	killSwitch: boolean;
 	privateKey?: string;
 	clobApiKey?: string;
 	clobSecret?: string;
@@ -58,7 +65,11 @@ export function loadConfig(): Config {
 		maxDailyUsd: num("MAX_DAILY_USD", 500),
 		scanIntervalMs: num("SCAN_INTERVAL_MS", 15_000),
 
+		cooldownMs: num("COOLDOWN_MS", 10 * 60 * 1000),
+		paperLedgerPath: process.env.PAPER_LEDGER ?? "data/paper-trades.jsonl",
+
 		live: bool("LIVE", false),
+		killSwitch: bool("KILL_SWITCH", false),
 		privateKey: process.env.PK,
 		clobApiKey: process.env.CLOB_API_KEY,
 		clobSecret: process.env.CLOB_SECRET,
