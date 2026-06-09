@@ -1,0 +1,27 @@
+{
+	"name": "polymarket-btc-arb",
+	"version": "0.1.0",
+	"description": "Arbitrage scanner/trader for Polymarket bitcoin markets, built on @polymarket/clob-client-v2",
+	"type": "module",
+	"private": true,
+	"engines": {
+		"node": ">=20.10"
+	},
+	"scripts": {
+		"scan": "tsx src/index.ts --once",
+		"start": "tsx src/index.ts",
+		"test": "vitest run",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@polymarket/clob-client-v2": "^1.0.6",
+		"dotenv": "^17.3.1",
+		"viem": "^2.46.3"
+	},
+	"devDependencies": {
+		"@types/node": "^22.19.11",
+		"tsx": "^4.20.0",
+		"typescript": "^5.9.2",
+		"vitest": "^4.0.15"
+	}
+}
