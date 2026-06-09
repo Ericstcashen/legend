@@ -52,12 +52,73 @@ transfers directly if a Python port is ever wanted.
 
 ## poly-market-maker (`Polymarket/poly-market-maker`) — official MM reference
 
-*(see findings below — strategy structure, risk controls, client dependency)*
+- **Depends on the archived `py-clob-client>=0.13.3`**
+  (`requirements.txt`); per the archive notice the client is no longer
+  functional, so this repo is a historical reference, not runnable code.
+- Strategy structure (`poly_market_maker/strategies/`): two strategies behind
+  one sync-loop manager (`strategy.py`). **Bands** places orders in margin
+  bands around the CLOB midpoint (`minMargin/avgMargin/maxMargin` ×
+  `minAmount/avgAmount/maxAmount`, `config/bands.json`), cancelling when a
+  band exceeds `maxAmount` and replenishing below `minAmount`, sells before
+  buys to reduce capital lock-up. **AMM** emulates concentrated liquidity
+  over `p_min/p_max` with `spread`/`delta` discretization and a
+  `max_collateral` cap. Lifecycle every sync interval (default 30s): fetch
+  midpoint → compute expected orders → diff against open orders → cancel
+  then place. SIGTERM cancels all orders on shutdown.
+- Risk controls: free-balance accounting in `orderbook.py`
+  (balance − collateral locked by open BUYs − tokens locked by SELLs),
+  zero/invalid-balance refusal, capital caps. **No kill switch, no position
+  limits, no circuit breaker.**
+- Comparison to our quoting-free arb bot: the cancel-before-place sync
+  discipline and free-balance accounting are the patterns worth borrowing if
+  we ever rest limit orders instead of taking with FOK.
 
 ## polybot (`ent0n29/polybot`) — community infra
 
-*(see findings below — paper/live split, ClickHouse ingestion, replication
-scoring, safety flags)*
+- Java 21/Spring Boot microservices with a **custom in-house Polymarket
+  client** (`polybot-core/.../clob/PolymarketClobClient.java`) — no archived
+  dependencies; would run today. Services: strategy (a "gabagool"
+  complete-set arb — same family as our pair arb), executor, ingestor,
+  analytics, orchestrator, with Kafka + ClickHouse + Grafana/Prometheus.
+- **Paper/live split (the part worth copying):** a single `hft.mode`
+  enum (`PAPER`/`LIVE`) checked inside the trading service
+  (`PolymarketTradingService.java:76-83`) — PAPER fabricates an order
+  response (`paper-<uuid>`) and never touches the venue, while a simulator
+  fills paper orders probabilistically (`application-develop.yaml`:
+  `sim.maker-fill-probability-per-poll`, fill fractions). Two extra layers we
+  lack: a **kill switch** (`hft.risk.kill-switch` blocks all placement) and a
+  **live-trading guard** (`LiveTradingGuardFilter.java` returns HTTP 428
+  unless the caller sends `X-HFT-LIVE-ACK: true`), plus a bankroll
+  circuit-breaker (EMA equity below threshold halts new orders).
+- ClickHouse ingestion: Kafka → `analytics_events` (MergeTree) →
+  materialized canonical tables — `user_trades` (per-fill prints incl.
+  tx hash) and `clob_tob` (top-of-book + depth/imbalance snapshots keyed to
+  trades), with enriched views adding execution classification and
+  seconds-to-expiry (`analytics-service/clickhouse/init/`).
+- Replication scoring (`research/replication_score*.py`): distribution-level
+  comparison of the bot's fills/decision stream against a target trader — L1
+  distance over market mix, outcome mix, execution type, timing buckets,
+  sizing stats; the order-stream variant compares cadence/replace/top-up
+  behavior. It's copy-trading calibration tooling — not relevant to our
+  strategy, but the metric structure is a good template for comparing
+  paper-mode behavior to live.
+- Flags per the handoff: README announces **AWARE**, a forthcoming product
+  layer (trader intelligence, fund mirroring) built on polybot — disclosure
+  of a future product, but no referral links, paid gating, or token shilling
+  in the code. No withdrawal logic anywhere (settlement only merges complete
+  sets, off by default, dry-run available). Credentials are env-var based.
+  Treat as read-only reference, as instructed — **do not deploy as-is.**
+
+## Adoption candidates for this bot
+
+Concrete, small upgrades inspired by the study (not implemented here):
+
+1. **Kill switch env flag** checked in `LiveExecutor` before any order
+   (polybot's `hft.risk.kill-switch`).
+2. **Paper-fill simulator** so dry-run produces a P&L stream instead of just
+   logs (polybot's executor sim).
+3. **Free-balance pre-check** before firing legs, from poly-market-maker's
+   locked-collateral accounting (our bot currently trusts FOK rejection).
 
 ## Awesome-Polymarket-Tools (`harish-garg/Awesome-Polymarket-Tools`)
 
