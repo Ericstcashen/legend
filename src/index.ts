@@ -195,6 +195,27 @@ async function main() {
 	let markets: BtcMarket[] = [];
 	let marketsFetchedAt = 0;
 
+	// Serialize scans so an event-triggered scan never overlaps a timer scan.
+	let scanning = false;
+	const runScan = async () => {
+		if (scanning) return;
+		scanning = true;
+		try {
+			await scanOnce(ctx, markets);
+		} catch (err) {
+			console.error(`scan failed: ${(err as Error).message}`);
+		} finally {
+			scanning = false;
+		}
+	};
+
+	// Event-driven scanning: react the instant the websocket reports a book move
+	// (coalesced). The interval timer remains as a heartbeat / REST fallback.
+	if (wsEngine) {
+		wsEngine.onUpdate(() => void runScan());
+		console.log("event-driven scanning armed (scan on book update)");
+	}
+
 	do {
 		try {
 			if (Date.now() - marketsFetchedAt > MARKET_REFRESH_MS) {
@@ -203,7 +224,7 @@ async function main() {
 				await source.setMarkets(markets);
 				console.log(`tracking ${markets.length} bitcoin markets`);
 			}
-			await scanOnce(ctx, markets);
+			await runScan();
 		} catch (err) {
 			console.error(`scan failed: ${(err as Error).message}`);
 		}

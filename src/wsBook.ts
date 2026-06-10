@@ -114,6 +114,35 @@ export interface WsBookEngineOptions {
 	feeRateBps?: number;
 	/** Books older than this are considered stale and excluded from snapshots. */
 	stalenessMs?: number;
+	/** Coalesce update notifications within this window (ms) to avoid scan storms. */
+	updateDebounceMs?: number;
+}
+
+/**
+ * Coalesces a burst of calls into a single deferred invocation. A flurry of
+ * book deltas should trigger exactly one scan, fired once the burst settles,
+ * not one scan per delta. Pure and clock-injectable for testing.
+ */
+export class Debouncer {
+	private timer: ReturnType<typeof setTimeout> | null = null;
+	constructor(
+		private fn: () => void,
+		private waitMs: number,
+		private schedule: (cb: () => void, ms: number) => ReturnType<typeof setTimeout> = setTimeout,
+		private cancel: (t: ReturnType<typeof setTimeout>) => void = clearTimeout,
+	) {}
+
+	trigger(): void {
+		if (this.timer) this.cancel(this.timer);
+		this.timer = this.schedule(() => {
+			this.timer = null;
+			this.fn();
+		}, this.waitMs);
+	}
+
+	get pending(): boolean {
+		return this.timer !== null;
+	}
 }
 
 const DEFAULT_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market";
@@ -137,11 +166,23 @@ export class WsBookEngine {
 	private feeRateBps: number;
 	private stalenessMs: number;
 	private running = false;
+	private updateDebouncer: Debouncer | null = null;
+	private updateHandler: (() => void) | null = null;
 
-	constructor(opts: WsBookEngineOptions = {}) {
+	constructor(private opts: WsBookEngineOptions = {}) {
 		this.url = opts.wsUrl ?? DEFAULT_WS_URL;
 		this.feeRateBps = opts.feeRateBps ?? 0;
 		this.stalenessMs = opts.stalenessMs ?? 5_000;
+	}
+
+	/**
+	 * Register a callback fired (debounced) whenever a tracked book changes, so
+	 * the scanner can react to a dislocation the instant it appears rather than
+	 * on a fixed timer — the latency edge that wins arb races.
+	 */
+	onUpdate(handler: () => void): void {
+		this.updateHandler = handler;
+		this.updateDebouncer = new Debouncer(handler, this.opts.updateDebounceMs ?? 50);
 	}
 
 	/** Track these markets' tokens and (re)subscribe. */
@@ -177,6 +218,9 @@ export class WsBookEngine {
 				const parsed = JSON.parse(raw.toString());
 				const arr = Array.isArray(parsed) ? parsed : [parsed];
 				for (const msg of arr) applyMarketMessage(this.state, msg);
+				// Notify the scanner that books moved (coalesced).
+				if (this.updateDebouncer) this.updateDebouncer.trigger();
+				else this.updateHandler?.();
 			} catch {
 				// ignore malformed frames
 			}

@@ -52,7 +52,11 @@ watching someone else take it. Two feed modes:
   token's book in memory from the CLOB market channel's `book` snapshots and
   `price_change` deltas, so the scanner reads current state with zero
   per-scan network latency and sees a dislocation the instant the book moves.
-  Stale books (no update within `BOOK_STALENESS_MS`) are excluded.
+  Stale books (no update within `BOOK_STALENESS_MS`) are excluded. In this
+  mode scanning is also **event-driven**: a book update triggers a scan
+  immediately (coalesced within ~50 ms), instead of waiting for the next
+  `SCAN_INTERVAL_MS` tick — so an arb is contested the moment it appears, not
+  up to an interval later. The interval remains as a heartbeat fallback.
 
 ## Quick start
 

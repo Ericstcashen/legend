@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { applyMarketMessage, BookState } from "../src/wsBook.js";
+import { describe, expect, it, vi } from "vitest";
+import { applyMarketMessage, BookState, Debouncer } from "../src/wsBook.js";
 
 describe("BookState snapshots", () => {
 	it("loads a book snapshot and returns sorted top-of-book", () => {
@@ -59,6 +59,40 @@ describe("BookState incremental changes", () => {
 		expect(s.hasBook("a")).toBe(true);
 		expect(s.hasBook("missing")).toBe(false);
 		expect(s.ageMs("missing")).toBe(Number.POSITIVE_INFINITY);
+	});
+});
+
+describe("Debouncer", () => {
+	it("coalesces a burst of triggers into a single deferred call", () => {
+		const fn = vi.fn();
+		const pending: { cb: (() => void) | null } = { cb: null };
+		const schedule = (cb: () => void) => {
+			pending.cb = cb;
+			return 1 as unknown as ReturnType<typeof setTimeout>;
+		};
+		const cancel = vi.fn();
+		const d = new Debouncer(fn, 50, schedule, cancel);
+
+		d.trigger();
+		d.trigger();
+		d.trigger();
+		// Each re-trigger cancels the previous pending timer.
+		expect(cancel).toHaveBeenCalledTimes(2);
+		expect(fn).not.toHaveBeenCalled();
+		expect(d.pending).toBe(true);
+
+		pending.cb?.(); // fire the settled timer
+		expect(fn).toHaveBeenCalledTimes(1);
+		expect(d.pending).toBe(false);
+	});
+
+	it("fires once per settled burst with real timers", async () => {
+		const fn = vi.fn();
+		const d = new Debouncer(fn, 10);
+		d.trigger();
+		d.trigger();
+		await new Promise((r) => setTimeout(r, 30));
+		expect(fn).toHaveBeenCalledTimes(1);
 	});
 });
 
