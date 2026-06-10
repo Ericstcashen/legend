@@ -10,6 +10,7 @@
 	"scripts": {
 		"scan": "tsx src/index.ts --once",
 		"start": "tsx src/index.ts",
+		"simulate": "tsx src/simulate.ts",
 		"test": "vitest run",
 		"typecheck": "tsc --noEmit"
 	},

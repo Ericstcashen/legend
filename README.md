@@ -59,6 +59,28 @@ deployed, $Y locked profit`) is printed every scan and survives restarts.
 A per-opportunity cooldown (`COOLDOWN_MS`, default 10 min) stops a standing
 arb from being re-counted — or re-fired in live mode — every scan.
 
+## Measuring profitability offline
+
+Polymarket's live endpoints aren't always reachable (and you shouldn't trade
+real money to find out whether the strategies work). `npm run simulate` drives
+the **real** scanner, strategies, risk checks, and paper ledger against a
+seeded synthetic market generator (`src/sim.ts`) that injects riskless
+dislocations — pair arbs, cross-strike inversions, and overpriced books — so
+the captured profit is measurable end-to-end with no network:
+
+```bash
+npm run simulate -- --rounds 300 --seed 7        # 0 bps fees
+npm run simulate -- --rounds 300 --seed 7 --fee 60   # net of 60 bps taker fees
+```
+
+It prints injected-vs-captured counts and the ledger's locked profit / ROI.
+Because every injected basket is riskless by construction, the reported profit
+is a true lower bound on what the strategies extract from those books, and the
+run exits non-zero if any booked basket fails the riskless invariant. The same
+pipeline is asserted in `tests/simulation.test.ts` (determinism, edge clears,
+cost < guaranteed value, all injected pair arbs captured, positive net-of-fee
+profit), so strategy changes that erode profitability fail CI.
+
 ## Going live
 
 > **Use at your own risk.** This trades real USDC. Start with small limits.
