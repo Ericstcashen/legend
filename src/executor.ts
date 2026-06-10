@@ -39,17 +39,21 @@ export class LiveExecutor {
 	) {}
 
 	private async buyLeg(leg: ArbPlanLeg): Promise<void> {
-		const resp = await this.client.createAndPostMarketOrder(
+		// Buy the EXACT planned share count, all-or-nothing, capped at capPrice —
+		// a marketable-limit FOK by size. A market order by dollar amount would
+		// receive amount/capPrice shares (the worst-level price), underfilling
+		// relative to the multi-level average cost and silently unbalancing the
+		// equal-shares basket that makes the arb riskless.
+		const signed = await this.client.createOrder(
 			{
 				tokenID: leg.leg.tokenId,
-				amount: Number(leg.cost.toFixed(2)),
 				price: leg.capPrice,
 				side: Side.BUY,
-				orderType: OrderType.FOK,
+				size: leg.shares,
 			},
 			{ tickSize: leg.leg.tickSize as never, negRisk: leg.leg.negRisk },
-			OrderType.FOK,
 		);
+		const resp = await this.client.postOrder(signed, OrderType.FOK);
 		if (resp?.success === false || resp?.errorMsg) {
 			throw new Error(resp.errorMsg ?? "order rejected");
 		}
