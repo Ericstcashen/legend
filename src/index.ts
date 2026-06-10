@@ -10,6 +10,7 @@ import { DryRunExecutor, type Executor, LiveExecutor } from "./executor.js";
 import { discoverBtcMarkets } from "./gamma.js";
 import { MintSellExecutor } from "./mintSell.js";
 import { PaperLedger } from "./paper.js";
+import { RecordingLegSource } from "./record.js";
 import { Cooldown, RiskManager } from "./risk.js";
 import { findAllArbs } from "./strategies.js";
 import type { ArbLeg, BtcMarket } from "./types.js";
@@ -172,9 +173,13 @@ async function main() {
 	const wsEngine = cfg.useWebsocket
 		? new WsBookEngine({ wsUrl: cfg.websocketUrl, stalenessMs: cfg.bookStalenessMs })
 		: null;
-	const source: LegSource = wsEngine
+	let source: LegSource = wsEngine
 		? new WsLegSource(wsEngine)
 		: new RestLegSource(new BookFetcher(client));
+	if (cfg.recordPath) {
+		source = new RecordingLegSource(source, cfg.recordPath);
+		console.log(`recording books to ${cfg.recordPath}`);
+	}
 	console.log(`book feed: ${wsEngine ? "websocket (live)" : "REST polling"}`);
 	const ctx: ScanContext = {
 		cfg,

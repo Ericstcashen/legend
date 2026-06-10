@@ -37,6 +37,8 @@ export interface Config {
 	maxDrawdown: number;
 	scanIntervalMs: number;
 
+	/** When set, every scan's books are recorded to this JSONL file for backtesting. */
+	recordPath?: string;
 	/** Use the live websocket book feed instead of REST polling. */
 	useWebsocket: boolean;
 	websocketUrl: string;
@@ -79,6 +81,7 @@ export function loadConfig(): Config {
 		maxDrawdown: num("MAX_DRAWDOWN", 0.1),
 		scanIntervalMs: num("SCAN_INTERVAL_MS", 15_000),
 
+		recordPath: process.env.RECORD_BOOKS || undefined,
 		useWebsocket: bool("USE_WEBSOCKET", false),
 		websocketUrl:
 			process.env.WEBSOCKET_URL ?? "wss://ws-subscriptions-clob.polymarket.com/ws/market",

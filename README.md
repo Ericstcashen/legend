@@ -98,6 +98,24 @@ pipeline is asserted in `tests/simulation.test.ts` (determinism, edge clears,
 cost < guaranteed value, all injected pair arbs captured, positive net-of-fee
 profit), so strategy changes that erode profitability fail CI.
 
+## Backtesting on real recorded books
+
+Synthetic simulation proves the strategy logic; backtesting proves it on *real*
+market conditions. Set `RECORD_BOOKS=data/books.jsonl` and every scan's
+fee-adjusted books are appended to a JSONL file (`src/record.ts`). Run the
+scanner connected to live endpoints for a while to accumulate a dataset, then
+replay it through the exact strategy/allocator/cooldown pipeline:
+
+```bash
+RECORD_BOOKS=data/books.jsonl npm start      # capture real books while scanning
+npm run backtest -- --file data/books.jsonl --budget 500
+```
+
+The backtest report (`src/backtest.ts`) measures booked baskets, capital
+deployed, realized profit, ROI, and a per-strategy breakdown across the
+recording — measured performance on the actual books the market presented,
+with the same cooldown and daily-budget discipline the live loop uses.
+
 ## Going live
 
 > **Use at your own risk.** This trades real USDC. Start with small limits.
@@ -167,7 +185,9 @@ src/
   paper.ts       append-only paper P&L ledger
   sim.ts         seeded synthetic market generator (offline)
   simulate.ts    offline profitability harness (npm run simulate)
-tests/           unit tests for math, parsing, book state, and simulation
+  record.ts      tees live books to JSONL for backtesting
+  backtest.ts    replays recordings through the pipeline (npm run backtest)
+tests/           unit tests for math, parsing, book state, simulation, backtest
 ```
 
 ## Caveats
