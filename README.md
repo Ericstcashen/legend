@@ -37,6 +37,19 @@ where the *marginal* cost of one more share-set crosses
 taker fees (`fee = bps × min(p, 1−p)`) are folded into prices before any
 comparison, so the configured edge is net of fees.
 
+### Book feed: REST vs websocket
+
+Arbs are fleeting, so latency is the difference between capturing an edge and
+watching someone else take it. Two feed modes:
+
+- **REST polling** (default): each scan fetches books over HTTP. Simple, but
+  an arb that appears mid-interval isn't seen until the next scan.
+- **Websocket** (`USE_WEBSOCKET=1`): `src/wsBook.ts` keeps every tracked
+  token's book in memory from the CLOB market channel's `book` snapshots and
+  `price_change` deltas, so the scanner reads current state with zero
+  per-scan network latency and sees a dislocation the instant the book moves.
+  Stale books (no update within `BOOK_STALENESS_MS`) are excluded.
+
 ## Quick start
 
 ```bash
@@ -126,10 +139,15 @@ src/
   strikes.ts     strike parsing and family grouping for cross-strike arbs
   books.ts       batched orderbook fetching, fee adjustment
   arbMath.ts     joint book-walking and basket planning (pure functions)
-  strategies.ts  the three opportunity finders
+  strategies.ts  the opportunity finders (pair, cross-strike, neg-risk, mint-sell)
+  books.ts       REST order-book fetching (batched, concurrent, fee-adjusted)
+  wsBook.ts      live websocket order-book state + fee-adjusted leg snapshots
   executor.ts    dry-run logger / live FOK execution
-  risk.ts        per-trade and daily budget enforcement
-tests/           unit tests for the math and parsing (npm test)
+  risk.ts        per-trade and daily budget enforcement, opportunity cooldown
+  paper.ts       append-only paper P&L ledger
+  sim.ts         seeded synthetic market generator (offline)
+  simulate.ts    offline profitability harness (npm run simulate)
+tests/           unit tests for math, parsing, book state, and simulation
 ```
 
 ## Caveats

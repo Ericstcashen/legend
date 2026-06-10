@@ -10,7 +10,37 @@ import { discoverBtcMarkets } from "./gamma.js";
 import { PaperLedger } from "./paper.js";
 import { Cooldown, RiskManager } from "./risk.js";
 import { findAllArbs } from "./strategies.js";
-import type { BtcMarket } from "./types.js";
+import type { ArbLeg, BtcMarket } from "./types.js";
+import { WsBookEngine } from "./wsBook.js";
+
+/**
+ * Supplies fee-adjusted legs for a set of markets. The REST source fetches on
+ * demand each scan; the websocket source reads from a continuously-updated
+ * in-memory book, so it sees an arb the instant the book moves.
+ */
+interface LegSource {
+	/** Called when the tracked market set changes. */
+	setMarkets(markets: BtcMarket[]): Promise<void>;
+	legs(markets: BtcMarket[]): Promise<Map<string, ArbLeg>>;
+}
+
+class RestLegSource implements LegSource {
+	constructor(private books: BookFetcher) {}
+	async setMarkets(): Promise<void> {}
+	legs(markets: BtcMarket[]): Promise<Map<string, ArbLeg>> {
+		return this.books.fetchLegs(markets);
+	}
+}
+
+class WsLegSource implements LegSource {
+	constructor(private engine: WsBookEngine) {}
+	setMarkets(markets: BtcMarket[]): Promise<void> {
+		return this.engine.setMarkets(markets);
+	}
+	async legs(): Promise<Map<string, ArbLeg>> {
+		return this.engine.snapshotLegs();
+	}
+}
 
 const MARKET_REFRESH_MS = 10 * 60 * 1000;
 
@@ -45,7 +75,7 @@ async function buildClients(cfg: Config): Promise<{ client: ClobClient; executor
 
 interface ScanContext {
 	cfg: Config;
-	books: BookFetcher;
+	source: LegSource;
 	risk: RiskManager;
 	executor: Executor;
 	cooldown: Cooldown;
@@ -53,8 +83,8 @@ interface ScanContext {
 }
 
 async function scanOnce(ctx: ScanContext, markets: BtcMarket[]): Promise<void> {
-	const { cfg, books, risk, executor, cooldown, ledger } = ctx;
-	const legs = await books.fetchLegs(markets);
+	const { cfg, source, risk, executor, cooldown, ledger } = ctx;
+	const legs = await source.legs(markets);
 	const opportunities = findAllArbs({
 		markets,
 		legs,
@@ -113,9 +143,16 @@ async function main() {
 	);
 
 	const { client, executor } = await buildClients(cfg);
+	const wsEngine = cfg.useWebsocket
+		? new WsBookEngine({ wsUrl: cfg.websocketUrl, stalenessMs: cfg.bookStalenessMs })
+		: null;
+	const source: LegSource = wsEngine
+		? new WsLegSource(wsEngine)
+		: new RestLegSource(new BookFetcher(client));
+	console.log(`book feed: ${wsEngine ? "websocket (live)" : "REST polling"}`);
 	const ctx: ScanContext = {
 		cfg,
-		books: new BookFetcher(client),
+		source,
 		risk: new RiskManager(cfg.maxDailyUsd, cfg.minProfitUsd),
 		executor,
 		cooldown: new Cooldown(cfg.cooldownMs),
@@ -130,6 +167,7 @@ async function main() {
 			if (Date.now() - marketsFetchedAt > MARKET_REFRESH_MS) {
 				markets = await discoverBtcMarkets(cfg);
 				marketsFetchedAt = Date.now();
+				await source.setMarkets(markets);
 				console.log(`tracking ${markets.length} bitcoin markets`);
 			}
 			await scanOnce(ctx, markets);

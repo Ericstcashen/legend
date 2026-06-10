@@ -35,6 +35,11 @@ export interface Config {
 	maxDailyUsd: number;
 	scanIntervalMs: number;
 
+	/** Use the live websocket book feed instead of REST polling. */
+	useWebsocket: boolean;
+	websocketUrl: string;
+	/** Books older than this (ms) are excluded from websocket snapshots. */
+	bookStalenessMs: number;
 	/** Re-act on the same opportunity at most once per window. */
 	cooldownMs: number;
 	/** JSONL file where paper (dry-run) fills are recorded. */
@@ -65,6 +70,10 @@ export function loadConfig(): Config {
 		maxDailyUsd: num("MAX_DAILY_USD", 500),
 		scanIntervalMs: num("SCAN_INTERVAL_MS", 15_000),
 
+		useWebsocket: bool("USE_WEBSOCKET", false),
+		websocketUrl:
+			process.env.WEBSOCKET_URL ?? "wss://ws-subscriptions-clob.polymarket.com/ws/market",
+		bookStalenessMs: num("BOOK_STALENESS_MS", 5_000),
 		cooldownMs: num("COOLDOWN_MS", 10 * 60 * 1000),
 		paperLedgerPath: process.env.PAPER_LEDGER ?? "data/paper-trades.jsonl",
 
