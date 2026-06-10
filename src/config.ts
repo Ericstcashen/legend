@@ -51,6 +51,12 @@ export interface Config {
 	live: boolean;
 	/** When true, the live executor refuses to place any order. */
 	killSwitch: boolean;
+	/**
+	 * Opt-in (separate from LIVE) for automated on-chain CTF mint-and-sell.
+	 * Off by default: the split is an irreversible transfer that needs
+	 * testnet/fork validation before mainnet use.
+	 */
+	mintSellLive: boolean;
 	privateKey?: string;
 	clobApiKey?: string;
 	clobSecret?: string;
@@ -82,6 +88,7 @@ export function loadConfig(): Config {
 
 		live: bool("LIVE", false),
 		killSwitch: bool("KILL_SWITCH", false),
+		mintSellLive: bool("MINT_SELL_LIVE", false),
 		privateKey: process.env.PK,
 		clobApiKey: process.env.CLOB_API_KEY,
 		clobSecret: process.env.CLOB_SECRET,

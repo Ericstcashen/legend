@@ -38,10 +38,13 @@ export interface ArbOpportunity {
 	/** profit / totalCost */
 	edge: number;
 	/**
-	 * False when the basket needs an on-chain step the executor does not
-	 * automate (e.g. CTF split before selling); such finds are reported, not traded.
+	 * False when the basket needs an on-chain step the standard FOK executor
+	 * does not automate (e.g. CTF split before selling). Mint-sell baskets are
+	 * executable only via the dedicated, opt-in MintSellExecutor.
 	 */
 	executable: boolean;
+	/** Set on mint-sell baskets: the CTF condition to split for the complete set. */
+	conditionId?: string;
 }
 
 export interface BtcMarket {

@@ -65,6 +65,7 @@ export function findMintSellArbs(inputs: StrategyInputs): ArbOpportunity[] {
 			profit: plan.profit,
 			edge: plan.edge,
 			executable: false,
+			conditionId: m.conditionId,
 		});
 	}
 	return out;

@@ -25,11 +25,15 @@ basket's payoff at resolution is deterministic:
    (e.g. "What will Bitcoin's price be on …?"), one set of **all YES** redeems
    for exactly $1, and one set of **all NO** redeems for $(n−1). Either basket
    is bought when it trades below its redemption value.
-4. **Mint-and-sell detection** — the inverse signal: when net YES+NO *bids*
-   exceed $1, splitting $1 of USDC into a YES+NO pair (CTF split) and selling
-   both is an immediate profit with no capital lock. The split is an on-chain
-   step the executor does not automate, so these are reported as `MANUAL`
-   opportunities with the available profit, never auto-traded.
+4. **Mint-and-sell** — the inverse signal: when net YES+NO *bids* exceed $1,
+   splitting $1 of USDC into a complete YES+NO set (CTF `splitPosition`) and
+   selling both is an immediate profit with no capital lock. By default these
+   are reported as `MANUAL`; set `MINT_SELL_LIVE=1` to arm the dedicated
+   on-chain executor (`src/mintSell.ts`) that splits collateral and sells both
+   legs FOK. The split is an irreversible transfer — **validate against a
+   testnet/fork before enabling on mainnet** (the calldata encoding is
+   unit-tested in `tests/ctf.test.ts`, but the broadcast path can't be
+   exercised offline).
 
 Sizing walks every leg's ask levels simultaneously and stops at the depth
 where the *marginal* cost of one more share-set crosses
@@ -156,6 +160,9 @@ src/
   books.ts       REST order-book fetching (batched, concurrent, fee-adjusted)
   wsBook.ts      live websocket order-book state + fee-adjusted leg snapshots
   executor.ts    dry-run logger / live FOK execution
+  ctf.ts         Conditional Tokens split/merge calldata (mint-and-sell)
+  mintSell.ts    gated on-chain mint-and-sell executor
+  allocator.ts   ROI capital rationing + bankroll circuit breaker
   risk.ts        per-trade and daily budget enforcement, opportunity cooldown
   paper.ts       append-only paper P&L ledger
   sim.ts         seeded synthetic market generator (offline)

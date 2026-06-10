@@ -8,6 +8,7 @@ import { BookFetcher } from "./books.js";
 import { type Config, loadConfig } from "./config.js";
 import { DryRunExecutor, type Executor, LiveExecutor } from "./executor.js";
 import { discoverBtcMarkets } from "./gamma.js";
+import { MintSellExecutor } from "./mintSell.js";
 import { PaperLedger } from "./paper.js";
 import { Cooldown, RiskManager } from "./risk.js";
 import { findAllArbs } from "./strategies.js";
@@ -45,12 +46,14 @@ class WsLegSource implements LegSource {
 
 const MARKET_REFRESH_MS = 10 * 60 * 1000;
 
-async function buildClients(cfg: Config): Promise<{ client: ClobClient; executor: Executor }> {
+async function buildClients(
+	cfg: Config,
+): Promise<{ client: ClobClient; executor: Executor; mintSell: MintSellExecutor | null }> {
 	const chainId = cfg.chainId as Chain;
 
 	if (!cfg.live) {
 		const client = new ClobClient({ host: cfg.clobApiUrl, chain: chainId });
-		return { client, executor: new DryRunExecutor() };
+		return { client, executor: new DryRunExecutor(), mintSell: null };
 	}
 
 	if (!cfg.privateKey) throw new Error("LIVE=1 requires PK to be set");
@@ -71,7 +74,11 @@ async function buildClients(cfg: Config): Promise<{ client: ClobClient; executor
 	console.log(`LIVE trading as ${account.address}`);
 	// Halt orders via env (KILL_SWITCH=1) or by touching a KILL file at runtime.
 	const killSwitch = () => cfg.killSwitch || existsSync("KILL");
-	return { client, executor: new LiveExecutor(client, killSwitch) };
+	const mintSell = cfg.mintSellLive
+		? new MintSellExecutor(client, signer, killSwitch)
+		: null;
+	if (mintSell) console.log("MINT_SELL_LIVE enabled — on-chain CTF mint-and-sell is armed");
+	return { client, executor: new LiveExecutor(client, killSwitch), mintSell };
 }
 
 interface ScanContext {
@@ -82,10 +89,11 @@ interface ScanContext {
 	cooldown: Cooldown;
 	ledger: PaperLedger;
 	bankroll: Bankroll;
+	mintSell: MintSellExecutor | null;
 }
 
 async function scanOnce(ctx: ScanContext, markets: BtcMarket[]): Promise<void> {
-	const { cfg, source, risk, executor, cooldown, ledger, bankroll } = ctx;
+	const { cfg, source, risk, executor, cooldown, ledger, bankroll, mintSell } = ctx;
 	if (cfg.live && bankroll.halted) {
 		console.warn(`bankroll circuit breaker tripped — ${bankroll.summary()}; pausing trading`);
 		return;
@@ -105,15 +113,23 @@ async function scanOnce(ctx: ScanContext, markets: BtcMarket[]): Promise<void> {
 		return;
 	}
 
-	// Surface non-executable (mint-sell) finds, then fund the rest by ROI within
-	// the remaining budget so limited capital captures the most profit per dollar.
+	// Fund the standard FOK baskets by ROI within budget. Mint-sell baskets need
+	// the on-chain CTF split: run them through MintSellExecutor when armed,
+	// otherwise surface them as manual opportunities.
 	const fresh = opportunities.filter((o) => !cooldown.active(o) && !risk.check(o));
 	for (const opp of fresh.filter((o) => !o.executable)) {
-		console.log(
-			`MANUAL [${opp.kind}] ${opp.description}: $${opp.profit.toFixed(2)} available ` +
-				`but needs an on-chain CTF split before selling — not automated`,
-		);
-		cooldown.mark(opp);
+		if (mintSell && opp.kind === "mint-sell" && opp.conditionId) {
+			const result = await mintSell.execute(opp);
+			if (result.spentUsd > 0) risk.recordSpend(result.spentUsd);
+			if (result.executed) ledger.record(opp);
+			cooldown.mark(opp);
+		} else {
+			console.log(
+				`MANUAL [${opp.kind}] ${opp.description}: $${opp.profit.toFixed(2)} available ` +
+					`but needs an on-chain CTF split before selling (set MINT_SELL_LIVE=1 to automate)`,
+			);
+			cooldown.mark(opp);
+		}
 	}
 
 	const executable = fresh.filter((o) => o.executable);
@@ -152,7 +168,7 @@ async function main() {
 			`maxPerTrade=$${cfg.maxUsdPerTrade} maxDaily=$${cfg.maxDailyUsd}`,
 	);
 
-	const { client, executor } = await buildClients(cfg);
+	const { client, executor, mintSell } = await buildClients(cfg);
 	const wsEngine = cfg.useWebsocket
 		? new WsBookEngine({ wsUrl: cfg.websocketUrl, stalenessMs: cfg.bookStalenessMs })
 		: null;
@@ -168,6 +184,7 @@ async function main() {
 		cooldown: new Cooldown(cfg.cooldownMs),
 		ledger: new PaperLedger(cfg.paperLedgerPath),
 		bankroll: new Bankroll(cfg.maxDailyUsd, cfg.maxDrawdown),
+		mintSell,
 	};
 
 	let markets: BtcMarket[] = [];
