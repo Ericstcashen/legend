@@ -66,4 +66,10 @@ export class RiskManager {
 		this.rollover();
 		this.spentToday += usd;
 	}
+
+	/** USD still available to deploy today. */
+	remainingBudget(): number {
+		this.rollover();
+		return Math.max(0, this.maxDailyUsd - this.spentToday);
+	}
 }

@@ -3,6 +3,7 @@ import { type ApiKeyCreds, Chain, ClobClient } from "@polymarket/clob-client-v2"
 import { createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { polygon, polygonAmoy } from "viem/chains";
+import { allocate, Bankroll } from "./allocator.js";
 import { BookFetcher } from "./books.js";
 import { type Config, loadConfig } from "./config.js";
 import { DryRunExecutor, type Executor, LiveExecutor } from "./executor.js";
@@ -80,10 +81,15 @@ interface ScanContext {
 	executor: Executor;
 	cooldown: Cooldown;
 	ledger: PaperLedger;
+	bankroll: Bankroll;
 }
 
 async function scanOnce(ctx: ScanContext, markets: BtcMarket[]): Promise<void> {
-	const { cfg, source, risk, executor, cooldown, ledger } = ctx;
+	const { cfg, source, risk, executor, cooldown, ledger, bankroll } = ctx;
+	if (cfg.live && bankroll.halted) {
+		console.warn(`bankroll circuit breaker tripped — ${bankroll.summary()}; pausing trading`);
+		return;
+	}
 	const legs = await source.legs(markets);
 	const opportunities = findAllArbs({
 		markets,
@@ -99,23 +105,21 @@ async function scanOnce(ctx: ScanContext, markets: BtcMarket[]): Promise<void> {
 		return;
 	}
 
-	for (const opp of opportunities) {
-		if (cooldown.active(opp)) continue;
-		const rejection = risk.check(opp);
-		if (rejection) {
-			console.log(`skip [${opp.kind}] ${opp.description}: ${rejection}`);
-			continue;
-		}
+	// Surface non-executable (mint-sell) finds, then fund the rest by ROI within
+	// the remaining budget so limited capital captures the most profit per dollar.
+	const fresh = opportunities.filter((o) => !cooldown.active(o) && !risk.check(o));
+	for (const opp of fresh.filter((o) => !o.executable)) {
+		console.log(
+			`MANUAL [${opp.kind}] ${opp.description}: $${opp.profit.toFixed(2)} available ` +
+				`but needs an on-chain CTF split before selling — not automated`,
+		);
+		cooldown.mark(opp);
+	}
 
-		if (!opp.executable) {
-			console.log(
-				`MANUAL [${opp.kind}] ${opp.description}: $${opp.profit.toFixed(2)} available ` +
-					`but needs an on-chain CTF split before selling — not automated`,
-			);
-			cooldown.mark(opp);
-			continue;
-		}
+	const executable = fresh.filter((o) => o.executable);
+	const { chosen } = allocate(executable, risk.remainingBudget());
 
+	for (const opp of chosen) {
 		const result = await executor.execute(opp);
 		if (result.spentUsd > 0) risk.recordSpend(result.spentUsd);
 		if (!cfg.live) {
@@ -127,7 +131,13 @@ async function scanOnce(ctx: ScanContext, markets: BtcMarket[]): Promise<void> {
 		}
 		if (result.executed) {
 			cooldown.mark(opp);
-			// Books are stale for overlapping opportunities once one trade fires.
+			continue; // chosen baskets share no legs, so remaining books stay valid
+		}
+		if (result.filledLegs > 0) {
+			// Partial (unhedged) fill: book the at-risk spend as a realized loss to
+			// the bankroll breaker, then stop the scan for the operator to react.
+			bankroll.update(-result.spentUsd);
+			console.warn(`unhedged exposure $${result.spentUsd.toFixed(2)} — ${bankroll.summary()}`);
 			break;
 		}
 	}
@@ -157,6 +167,7 @@ async function main() {
 		executor,
 		cooldown: new Cooldown(cfg.cooldownMs),
 		ledger: new PaperLedger(cfg.paperLedgerPath),
+		bankroll: new Bankroll(cfg.maxDailyUsd, cfg.maxDrawdown),
 	};
 
 	let markets: BtcMarket[] = [];

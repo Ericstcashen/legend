@@ -70,12 +70,13 @@ function bookForOutcome(
 	fair: number,
 	rng: Mulberry32,
 	feeBps: number,
-	overrides?: { bestAsk?: number; bestBid?: number },
+	overrides?: { bestAsk?: number; bestBid?: number; depth?: [number, number] },
 ): { asks: BookLevel[]; bids: BookLevel[] } {
 	const halfSpread = rng.range(0.005, 0.02);
 	const bestAsk = overrides?.bestAsk ?? Math.min(0.99, fair + halfSpread);
 	const bestBid = overrides?.bestBid ?? Math.max(0.01, fair - halfSpread);
-	const size = () => rng.range(50, 400);
+	const [lo, hi] = overrides?.depth ?? [50, 400];
+	const size = () => rng.range(lo, hi);
 	const rawAsks = levels(bestAsk, 5, 0.01, size);
 	const rawBids = levels(bestBid, 5, -0.01, size);
 	return {
@@ -133,11 +134,23 @@ export function generateRound(cfg: SimConfig, rng: Mulberry32, roundId: number):
 		let noBook = bookForOutcome(1 - fairYes, rng, cfg.feeRateBps);
 
 		// Inject a same-market pair arb: drive both asks down so YES+NO < $1.
+		// Mirror real depth/edge structure: deep liquidity sits near fair value
+		// (thin edge), while large dislocations hide in thin books (fat edge).
 		if (rng.next() < cfg.pairArbProb) {
-			const yAsk = rng.range(0.3, 0.45);
-			const nAsk = rng.range(0.3, 0.52 - (yAsk - 0.3));
-			yesBook = bookForOutcome(fairYes, rng, cfg.feeRateBps, { bestAsk: Number(yAsk.toFixed(2)) });
-			noBook = bookForOutcome(1 - fairYes, rng, cfg.feeRateBps, { bestAsk: Number(nAsk.toFixed(2)) });
+			const thin = rng.next() < 0.5;
+			// thin book → aggressive (cheap) asks, high edge; deep book → barely-sub-$1.
+			const sum = thin ? rng.range(0.78, 0.9) : rng.range(0.965, 0.99);
+			const depth: [number, number] = thin ? [5, 30] : [200, 500];
+			const yAsk = sum / 2 + rng.range(-0.05, 0.05);
+			const nAsk = sum - yAsk;
+			yesBook = bookForOutcome(fairYes, rng, cfg.feeRateBps, {
+				bestAsk: Number(yAsk.toFixed(2)),
+				depth,
+			});
+			noBook = bookForOutcome(1 - fairYes, rng, cfg.feeRateBps, {
+				bestAsk: Number(nAsk.toFixed(2)),
+				depth,
+			});
 			injected.pair++;
 		} else if (rng.next() < cfg.mintSellProb) {
 			// Inject a mint-sell: drive both bids up so YES+NO bids > $1.

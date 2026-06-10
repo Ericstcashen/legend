@@ -33,6 +33,8 @@ export interface Config {
 	minProfitUsd: number;
 	maxUsdPerTrade: number;
 	maxDailyUsd: number;
+	/** Drawdown fraction that trips the bankroll circuit breaker (0.1 = 10%). */
+	maxDrawdown: number;
 	scanIntervalMs: number;
 
 	/** Use the live websocket book feed instead of REST polling. */
@@ -68,6 +70,7 @@ export function loadConfig(): Config {
 		minProfitUsd: num("MIN_PROFIT_USD", 0.25),
 		maxUsdPerTrade: num("MAX_USD_PER_TRADE", 100),
 		maxDailyUsd: num("MAX_DAILY_USD", 500),
+		maxDrawdown: num("MAX_DRAWDOWN", 0.1),
 		scanIntervalMs: num("SCAN_INTERVAL_MS", 15_000),
 
 		useWebsocket: bool("USE_WEBSOCKET", false),

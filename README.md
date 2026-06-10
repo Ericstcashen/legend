@@ -110,6 +110,19 @@ To halt live order placement instantly without stopping the scanner, run
 `touch KILL` in the working directory (or set `KILL_SWITCH=1` before start);
 remove the file to resume.
 
+**Capital rationing.** Each scan funds non-overlapping baskets by ROI within
+the remaining daily budget (`src/allocator.ts`). De-duplicating overlapping
+legs matters: two baskets sharing a token would double-count the same book
+depth that a single fill consumes. (ROI-first vs profit-first ordering is
+within noise when baskets are large relative to the budget — see the
+simulator's capital-rationing report — so the ordering is a sensible default,
+not a profit lever in itself.)
+
+**Bankroll circuit breaker.** A partial (unhedged) fill books its at-risk
+spend as a realized loss to an EMA-smoothed equity tracker; if equity falls
+`MAX_DRAWDOWN` below its peak, live trading halts until it recovers
+(`src/allocator.ts` `Bankroll`), protecting capital during a bad run.
+
 Execution uses sequential **FOK market buys**, one per leg, each capped at the
 worst book level the plan touched. FOK fills entirely at-or-better or not at
 all, so a book move mid-basket leaves at most the earlier legs filled — the
