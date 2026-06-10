@@ -188,9 +188,10 @@ spend as a realized loss to an EMA-smoothed equity tracker; if equity falls
 `MAX_DRAWDOWN` below its peak, live trading halts until it recovers
 (`src/allocator.ts` `Bankroll`), protecting capital during a bad run.
 
-Execution uses sequential **FOK market buys**, one per leg, each capped at the
-worst book level the plan touched. FOK fills entirely at-or-better or not at
-all, so a book move mid-basket leaves at most the earlier legs filled — the
+Execution uses sequential **FOK marketable-limit buys by share size**, one per
+leg — the exact planned share count, capped at the worst book level the plan
+touched. FOK fills entirely at-or-better or not at all, so a book move
+mid-basket leaves at most the earlier legs filled — the
 trader logs an **UNHEDGED** warning with the filled size and stops; completing
 or unwinding that position is a manual decision.
 
