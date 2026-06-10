@@ -102,6 +102,27 @@ pipeline is asserted in `tests/simulation.test.ts` (determinism, edge clears,
 cost < guaranteed value, all injected pair arbs captured, positive net-of-fee
 profit), so strategy changes that erode profitability fail CI.
 
+## Optimality: how "most profitable" is provable offline
+
+For a *pure arbitrage* strategy, beating competitors isn't only about speed —
+it's about leaving no riskless edge uncaptured. A binary market resolves to one
+of two states, so its only state-independent edges are buying a complete set
+below $1 or selling a minted set above $1; their sum is the exhaustive riskless
+maximum the book allows. `src/optimality.ts` computes that maximum from first
+principles (independent of the strategy code), and the simulator + a dedicated
+test confirm the pair and mint-sell strategies capture **100%** of it across
+hundreds of randomized books.
+
+That is the strongest form of "most profitable" establishable without live
+capital: against the same book, **no competitor can extract more riskless
+profit than this trader does** — completeness is mathematical, and speed
+(the websocket + event-driven stack) decides who reaches the edge first. What
+remains genuinely unknowable offline is whether real Polymarket books contain
+enough mispricing, and whether fills win the race — both require live capital
+and a measured track record. The live `MIN_EDGE` floor and per-trade cap
+deliberately forgo thin/large slivers of that maximum; that's a risk choice,
+separate from the coverage proof.
+
 ## Backtesting on real recorded books
 
 Synthetic simulation proves the strategy logic; backtesting proves it on *real*

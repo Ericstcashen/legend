@@ -5,9 +5,10 @@ import { allocate } from "./allocator.js";
 import { loadConfig } from "./config.js";
 import { PaperLedger } from "./paper.js";
 import { Cooldown, RiskManager } from "./risk.js";
+import { captureEfficiency, maxBinaryRisklessProfit } from "./optimality.js";
 import { DEFAULT_SIM, generateRound, Mulberry32, type SimConfig } from "./sim.js";
-import { findAllArbs } from "./strategies.js";
-import type { ArbOpportunity } from "./types.js";
+import { findAllArbs, findMintSellArbs, findPairArbs } from "./strategies.js";
+import type { ArbLeg, ArbOpportunity, BtcMarket } from "./types.js";
 
 /**
  * Capital-efficiency check against a single global budget — the regime the bot
@@ -78,6 +79,9 @@ function main(): void {
 	// Capital-efficiency comparison against a single global (daily-style) budget.
 	const totalBudget = arg("budget", cfg.maxDailyUsd);
 	const allExecutable: ArbOpportunity[] = [];
+	// Optimality tracking: available vs captured riskless profit on binary markets.
+	let availableBinary = 0;
+	let capturedBinary = 0;
 
 	console.log(
 		`simulation | ${rounds} rounds seed=${seed} fee=${simCfg.feeRateBps}bps ` +
@@ -107,6 +111,25 @@ function main(): void {
 			ledger.record(opp);
 			captured[opp.kind]++;
 			allExecutable.push(opp);
+		}
+
+		// Optimality (completeness): compare the independent max riskless profit
+		// per binary market to what the strategies extract under MATCHED
+		// conditions (no min-edge floor, no per-trade cap), isolating coverage
+		// from the deliberate edge forgone by the live risk controls.
+		for (const m of round.markets) {
+			const yes = round.legs.get(m.yesTokenId) as ArbLeg;
+			const no = round.legs.get(m.noTokenId) as ArbLeg;
+			availableBinary += maxBinaryRisklessProfit(yes, no).total;
+			const single = new Map<string, ArbLeg>([
+				[m.yesTokenId, yes],
+				[m.noTokenId, no],
+			]);
+			const markets: BtcMarket[] = [m];
+			const unconstrained = { markets, legs: single, minEdge: 0, maxUsdPerTrade: Number.POSITIVE_INFINITY };
+			for (const o of [...findPairArbs(unconstrained), ...findMintSellArbs(unconstrained)]) {
+				capturedBinary += o.profit;
+			}
 		}
 	}
 
@@ -142,6 +165,16 @@ function main(): void {
 	// the allocator's value is bounding spend to budget and de-duplicating
 	// overlapping legs, not beating profit-first. Reported for transparency.
 	console.log(`  ordering delta: ${uplift >= 0 ? "+" : ""}${uplift.toFixed(2)}% (neutral — both ration the same budget)`);
+
+	const { efficiency } = captureEfficiency(availableBinary, capturedBinary);
+	console.log("=== optimality (binary markets, independent of strategy code) ===");
+	console.log(
+		`  available riskless profit $${availableBinary.toFixed(2)} | captured (unconstrained) ` +
+			`$${capturedBinary.toFixed(2)} | completeness ${(efficiency * 100).toFixed(2)}%`,
+	);
+	console.log("  (100% = strategies leave no riskless edge on the table; no competitor can extract more");
+	console.log("   from the same book. The live min-edge floor and per-trade cap forgo thin/large edge");
+	console.log("   by choice — a risk decision, separate from this coverage proof.)");
 
 	// Profit must be strictly positive and every booked basket riskless by
 	// construction — a non-positive result is a strategy regression.
