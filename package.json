@@ -12,6 +12,7 @@
 		"start": "tsx src/index.ts",
 		"simulate": "tsx src/simulate.ts",
 		"backtest": "tsx src/backtest.ts",
+		"preflight": "tsx src/preflight.ts",
 		"test": "vitest run",
 		"typecheck": "tsc --noEmit"
 	},

@@ -124,6 +124,24 @@ with the same cooldown and daily-budget discipline the live loop uses.
 
 > **Use at your own risk.** This trades real USDC. Start with small limits.
 
+### Deployment runbook
+
+Run from a machine that can reach Polymarket's endpoints (the public API is
+Cloudflare-protected and may block datacenter/sandbox IPs):
+
+1. `npm install && cp .env.example .env`
+2. **Calibrate first (no risk):** `RECORD_BOOKS=data/books.jsonl npm start`
+   for a while, then `npm run backtest -- --file data/books.jsonl` to see the
+   ROI the strategies would have captured on the real books you just recorded.
+3. Fund a Polygon wallet with USDC and approve Polymarket's exchange
+   allowances (one manual UI trade sets them).
+4. Set `PK` and `LIVE=1`, keep limits small (`MAX_USD_PER_TRADE`,
+   `MAX_DAILY_USD`).
+5. **`npm run preflight`** — validates config, key, and endpoint reachability
+   and prints a GO / NO-GO. Don't start live until it says GO.
+6. `USE_WEBSOCKET=1 LIVE=1 npm start` — lowest-latency, event-driven mode.
+   Watch the paper-then-real ledger accumulate; `touch KILL` halts instantly.
+
 1. Fund a Polygon wallet with USDC and approve Polymarket's exchange
    allowances (see the `examples/account/approveAllowances.ts` script in
    clob-client-v2, or place one manual trade through the UI which sets them).
