@@ -11,6 +11,7 @@
 		"scan": "tsx src/index.ts --once",
 		"start": "tsx src/index.ts",
 		"simulate": "tsx src/simulate.ts",
+		"tune": "tsx src/tune.ts",
 		"backtest": "tsx src/backtest.ts",
 		"preflight": "tsx src/preflight.ts",
 		"test": "vitest run",

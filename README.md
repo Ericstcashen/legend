@@ -102,6 +102,40 @@ pipeline is asserted in `tests/simulation.test.ts` (determinism, edge clears,
 cost < guaranteed value, all injected pair arbs captured, positive net-of-fee
 profit), so strategy changes that erode profitability fail CI.
 
+## Tuning config with a worker–verifier loop
+
+Picking `MIN_EDGE` / `MAX_USD_PER_TRADE` by hand is guesswork. `npm run tune`
+searches for a config that meets an objective profitability goal using a
+**worker–verifier loop** (`src/loop.ts`), with the deterministic simulator as
+the verifier:
+
+```
+goal + objective criteria
+  → worker proposes a candidate { minEdge, maxUsdPerTrade }
+  → verifier RUNS the seeded simulator on it (a script — no model judgement)
+  → on fail, the worker is handed WHICH criteria failed (not "try again")
+  → it reacts: profit short ⇒ deploy more per basket; ROI short ⇒ raise the
+    edge floor; capture short ⇒ lower it
+  → capped at N attempts; stops the instant a verdict passes
+```
+
+```bash
+npm run tune                          # default goal: profit>=$3300, ROI>=17%, >=60 pairs
+npm run tune -- --min-roi 20 --max-attempts 20
+npm run tune -- --start-edge 0.12 --start-usd 20 --seed 7 --fee 60
+```
+
+Each attempt prints the candidate, its measured metrics, and pass/fail; the run
+ends with the converged config (or the unmet criteria if it hits the cap, with a
+non-zero exit). Because the simulator is seeded, the same start + goal always
+converge to the same config — a reproducible optimizer, not a stochastic one.
+
+`src/loop.ts` is domain-agnostic: a `worker`, a `verifier` built from named
+objective `Criterion`s, and a `maxAttempts` cap. The verifier's failed checks
+*are* the feedback handed to the next attempt, so retries target the specific
+shortfall rather than blindly regenerating. `tests/loop.test.ts` and
+`tests/tune.test.ts` cover the harness and this instantiation.
+
 ## Optimality: how "most profitable" is provable offline
 
 For a *pure arbitrage* strategy, beating competitors isn't only about speed —
@@ -229,6 +263,8 @@ src/
   paper.ts       append-only paper P&L ledger
   sim.ts         seeded synthetic market generator (offline)
   simulate.ts    offline profitability harness (npm run simulate)
+  loop.ts        generic worker–verifier loop (objective criteria, capped retries)
+  tune.ts        config tuner: worker–verifier loop over the simulator (npm run tune)
   record.ts      tees live books to JSONL for backtesting
   backtest.ts    replays recordings through the pipeline (npm run backtest)
 tests/           unit tests for math, parsing, book state, simulation, backtest
